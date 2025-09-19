@@ -1,0 +1,7 @@
+psycopg2-binary==2.9.9
+requests==2.32.3
+python-dotenv==1.0.1
+
+mypy==1.10.0
+flake8==7.1.0
+pytest==8.2.2
