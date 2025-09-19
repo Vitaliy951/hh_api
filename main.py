@@ -31,7 +31,7 @@ def main():
 
         # Вставка вакансий
         for vac in vacancies:
-            salary = vac.get('salary')
+            salary = vac.get('salary') or {}
             cur.execute(
                 """INSERT INTO vacancies 
                 VALUES (%s, %s, %s, %s, %s, %s, %s)""",
@@ -39,9 +39,9 @@ def main():
                     vac['id'],
                     vac['name'],
                     vac['employer']['id'],
-                    salary['from'] if salary else None,
-                    salary['to'] if salary else None,
-                    salary['currency'] if salary else None,
+                    salary.get('from'),
+                    salary.get('to'),
+                    salary.get('currency'),
                     vac['alternate_url']
                 )
             )

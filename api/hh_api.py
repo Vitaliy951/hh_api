@@ -1,5 +1,6 @@
 import requests
 from typing import Dict, List
+import time
 
 
 class HeadHunterAPI:
@@ -26,7 +27,18 @@ class HeadHunterAPI:
         return employers
 
     def get_vacancies(self, employer_id: str) -> List[Dict]:
-        """Получение вакансий компании"""
+        """Улучшенная версия с повторами и таймаутами"""
         params = {'employer_id': employer_id, 'per_page': 100}
-        response = requests.get(f"{self.BASE_URL}vacancies", params=params)
-        return response.json().get('items', []) if response.ok else []
+        for _ in range(3):
+            try:
+                response = requests.get(
+                    f"{self.BASE_URL}vacancies",
+                    params=params,
+                    timeout=10
+                )
+                response.raise_for_status()
+                return response.json().get('items', [])
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Ошибка запроса: {str(e)}")
+                time.sleep(2)
+        return []

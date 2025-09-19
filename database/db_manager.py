@@ -16,13 +16,20 @@ class DBManager:
 
     @contextmanager
     def _get_cursor(self):
-        conn = psycopg2.connect(**self.conn_params)
+        conn = None
         try:
+            conn = psycopg2.connect(**self.conn_params)
             with conn.cursor() as cursor:
                 yield cursor
             conn.commit()
+        except psycopg2.Error as e:
+            logger.error(f"Ошибка БД: {str(e)}")
+            if conn:
+                conn.rollback()
+            raise
         finally:
-            conn.close()
+            if conn:
+                conn.close()
 
     def get_companies_and_vacancies_count(self) -> List[tuple]:
         """Получить список компаний с количеством вакансий"""
