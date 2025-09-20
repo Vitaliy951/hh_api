@@ -1,55 +1,35 @@
-from database.db_manager import DBManager
-from api.hh_api import HeadHunterAPI
-from database.models import Employer, Vacancy
 import os
+from dotenv import load_dotenv
+from database.db_creator import DBCreator
+from api.hh_api import HeadHunterAPI
+from api.models import Employer, Vacancy
+from utils.logger import logger
+from utils.helpers import batch_insert
+
+load_dotenv()
 
 
 def main():
     # Инициализация БД
-    db = DBManager(
-        dbname=os.getenv('DB_NAME'),
-        user=os.getenv('DB_USER'),
-        password=os.getenv('DB_PASSWORD'),
-        host=os.getenv('DB_HOST')
-    )
+    db_creator = DBCreator()
+    db_creator.create_database()
+    db_creator.create_tables()
 
-    # Получение данных
-    api = HeadHunterAPI(employer_ids=['15478', '2180', ...])  # 10 компаний
-    employers = api.get_employers()
-    vacancies = []
-    for emp in employers:
-        vacancies.extend(api.get_vacancies(emp['id']))
+    # Получение топ-10 компаний
+    hh_api = HeadHunterAPI()
+    top_employers = hh_api.get_top_employers(limit=10)
 
-    # Заполнение БД
-    with db._get_cursor() as cur:
-        # Вставка работодателей
-        for emp in employers:
-            cur.execute(
-                "INSERT INTO employers VALUES (%s, %s, %s, %s)",
-                (emp['id'], emp['name'], emp['url'], emp['open_vacancies'])
-            )
+    # Сохранение работодателей
+    employers_data = [e.to_dict() for e in top_employers if e]
+    batch_insert('employers', employers_data)
 
-        # Вставка вакансий
-        for vac in vacancies:
-            salary = vac.get('salary') or {}
-            cur.execute(
-                """INSERT INTO vacancies 
-                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (
-                    vac['id'],
-                    vac['name'],
-                    vac['employer']['id'],
-                    salary.get('from'),
-                    salary.get('to'),
-                    salary.get('currency'),
-                    vac['alternate_url']
-                )
-            )
+    # Получение и сохранение вакансий
+    for employer in top_employers:
+        vacancies = hh_api.get_vacancies_by_employer(employer.id)
+        vacancies_data = [v.to_dict() for v in vacancies if v]
+        batch_insert('vacancies', vacancies_data)
 
-    # Пример использования
-    print("Компании и количество вакансий:")
-    for company, count in db.get_companies_and_vacancies_count():
-        print(f"{company}: {count} вакансий")
+    logger.info("Данные успешно загружены")
 
 
 if __name__ == "__main__":

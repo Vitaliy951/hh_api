@@ -1,117 +1,77 @@
-"""
-Модуль вспомогательных функций для работы с API hh.ru и PostgreSQL
-"""
-import logging
-from typing import Callable, Optional, Dict, List, Tuple, Any
+import psycopg2
+from typing import List, Dict
+from config import config
+from utils.logger import logger
 
+def insert_employers(employers: List[Dict]) -> None:
+    """Пакетная вставка данных работодателей"""
+    query = """
+        INSERT INTO employers (employer_id, name, url, open_vacancies)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (employer_id) DO NOTHING
+    """
+    try:
+        conn = psycopg2.connect(**config())
+        cur = conn.cursor()
 
-# ==================== Обработка данных ====================
-def process_salary(salary_data: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[int], Optional[str]]:
-    """Извлекает и форматирует данные о зарплате из ответа API"""
-    if not salary_data:
-        return (None, None, None)
+        data = [
+            (emp['id'], emp['name'], emp['alternate_url'], emp['open_vacancies'])
+            for emp in employers
+        ]
+        cur.executemany(query, data)
+        conn.commit()
+        logger.info(f"Добавлено {len(employers)} работодателей")
 
-    return (
-        salary_data.get('from'),
-        salary_data.get('to'),
-        salary_data.get('currency', 'RUR').upper()
-    )
+    except psycopg2.Error as e:
+        logger.error(f"Ошибка вставки работодателей: {e}")
+        conn.rollback()
+    finally:
+        if conn: conn.close()
 
+def batch_insert(table: str, data: list[dict], batch_size: int = 100):
+    """Массовая вставка данных в указанную таблицу"""
+    with psycopg2.connect(**conn_params) as conn:
+        with conn.cursor() as cursor:
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i+batch_size]
+                columns = ', '.join(batch[0].keys())
+                values = ', '.join([f"(%({k})s)" for k in batch[0].keys()])
+                query = f"""
+                    INSERT INTO {table} ({columns})
+                    VALUES {values}
+                    ON CONFLICT DO NOTHING
+                """
+                execute_batch(cursor, query, batch)
 
-def validate_employer_ids(ids: List[str]) -> bool:
-    """Проверяет корректность списка ID работодателей"""
-    return all(
-        isinstance(emp_id, str) and emp_id.isdigit() and len(emp_id) >= 4
-        for emp_id in ids
-    )
+def insert_vacancies(vacancies: List[Dict]) -> None:
+    """Пакетная вставка вакансий"""
+    query = """
+        INSERT INTO vacancies (employer_id, title, salary_from, 
+            salary_to, currency, url)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """
+    try:
+        conn = psycopg2.connect(**config())
+        cur = conn.cursor()
 
+        data = []
+        for vac in vacancies:
+            salary = vac.get('salary')
+            data.append((
+                vac['employer']['id'],
+                vac['name'],
+                salary.get('from') if salary else None,
+                salary.get('to') if salary else None,
+                salary.get('currency') if salary else None,
+                vac['alternate_url']
+            ))
 
-# ==================== Форматирование ====================
-def format_vacancy(vacancy: Dict[str, Any]) -> str:
-    """Генерирует читаемое представление вакансии"""
-    salary_from = vacancy.get('salary_from')
-    salary_to = vacancy.get('salary_to')
-    currency = vacancy.get('currency', 'RUR')
+        cur.executemany(query, data)
+        conn.commit()
+        logger.info(f"Добавлено {len(vacancies)} вакансий")
 
-    salary_info = []
-    if salary_from: salary_info.append(f"от {salary_from}")
-    if salary_to: salary_info.append(f"до {salary_to}")
-    salary_str = " ".join(salary_info) + f" {currency}" if salary_info else "не указана"
-
-    return (
-        f"Вакансия: {vacancy['name']}\n"
-        f"Компания: {vacancy['employer_name']}\n"
-        f"Зарплата: {salary_str}\n"
-        f"Ссылка: {vacancy['url']}\n"
-    )
-
-
-# ==================== Логирование ====================
-def setup_logger(name: str = 'hh_parser') -> logging.Logger:
-    """Настраивает систему логирования"""
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
-
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(module)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    file_handler = logging.FileHandler('hh_parser.log', encoding='utf-8')
-    file_handler.setFormatter(formatter)
-
-    logger.addHandler(file_handler)
-    return logger
-
-
-# ==================== Обработка ошибок ====================
-def handle_errors(func: Callable) -> Callable:
-    """Декоратор для перехвата и логирования исключений"""
-
-    def wrapper(*args, **kwargs):
-        logger = setup_logger()
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            logger.error(
-                f"Ошибка в {func.__name__}: {str(e)}",
-                exc_info=True
-            )
-            return None
-
-    return wrapper
-
-
-# ==================== Утилиты БД ====================
-def dict_to_sql_params(data: Dict, exclude: List[str] = None) -> Tuple[List[str], List]:
-    """Подготавливает параметры для SQL-запроса"""
-    exclude = exclude or []
-    columns = [k for k in data.keys() if k not in exclude]
-    values = [data[col] for col in columns]
-    return columns, values
-
-
-def create_placeholders(num: int) -> str:
-    """Генерирует строку с плейсхолдерами для SQL-запроса"""
-    return ', '.join(['%s'] * num)
-
-
-# ==================== Конвертация валют ====================
-class CurrencyConverter:
-    """Класс для конвертации валют (заглушка)"""
-
-    def __init__(self):
-        self.rates = {
-            'USD': 90.5,
-            'EUR': 99.0,
-            'KZT': 0.18
-        }
-
-    def convert_to_rub(self, amount: float, currency: str) -> float:
-        """Конвертирует сумму в рубли"""
-        currency = currency.upper()
-        if currency == 'RUR':
-            return amount
-        return amount * self.rates.get(currency, 1.0)
+    except psycopg2.Error as e:
+        logger.error(f"Ошибка вставки вакансий: {e}")
+        conn.rollback()
+    finally:
+        if conn: conn.close()
