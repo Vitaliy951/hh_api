@@ -1,77 +1,164 @@
 import psycopg2
-from typing import List, Dict
+from psycopg2.extras import execute_batch
+from typing import List, Dict, Any
 from config import config
 from utils.logger import logger
 
-def insert_employers(employers: List[Dict]) -> None:
-    """Пакетная вставка данных работодателей"""
-    query = """
-        INSERT INTO employers (employer_id, name, url, open_vacancies)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (employer_id) DO NOTHING
-    """
-    try:
-        conn = psycopg2.connect(**config())
-        cur = conn.cursor()
 
+class DBHelper:
+    def __init__(self):
+        self.conn_params = config()
+        self._validate_config()
+
+    def _validate_config(self) -> None:
+        """Проверка валидности конфигурации подключения"""
+        required = ['dbname', 'user', 'password', 'host', 'port']
+        if not all(self.conn_params.get(key) for key in required):
+            missing = [key for key in required if not self.conn_params.get(key)]
+            raise ValueError(f"Неполная конфигурация БД: {', '.join(missing)}")
+
+    def _connect(self) -> psycopg2.extensions.connection:
+        """Установка соединения с таймаутами"""
+        return psycopg2.connect(
+            **self.conn_params,
+            connect_timeout=5,
+            options="-c statement_timeout=30000"
+        )
+
+    def insert_employers(self, employers: List[Dict[str, Any]]) -> int:
+        """
+        Пакетная вставка данных работодателей
+
+        Args:
+            employers: Список словарей с данными работодателей
+
+        Returns:
+            Количество успешно добавленных записей
+        """
+        query = """
+            INSERT INTO employers (
+                employer_id, 
+                name, 
+                url, 
+                open_vacancies
+            ) VALUES (%s, %s, %s, %s)
+            ON CONFLICT (employer_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                url = EXCLUDED.url,
+                open_vacancies = EXCLUDED.open_vacancies
+        """
         data = [
-            (emp['id'], emp['name'], emp['alternate_url'], emp['open_vacancies'])
+            (
+                emp['id'],
+                emp['name'][:100],  # Ограничение длины по схеме БД
+                emp.get('alternate_url', '')[:200],
+                emp.get('open_vacancies', 0)
+            )
             for emp in employers
         ]
-        cur.executemany(query, data)
-        conn.commit()
-        logger.info(f"Добавлено {len(employers)} работодателей")
 
-    except psycopg2.Error as e:
-        logger.error(f"Ошибка вставки работодателей: {e}")
-        conn.rollback()
-    finally:
-        if conn: conn.close()
+        return self._batch_execute(query, data, "работодателей")
 
-def batch_insert(table: str, data: list[dict], batch_size: int = 100):
-    """Массовая вставка данных в указанную таблицу"""
-    with psycopg2.connect(**conn_params) as conn:
-        with conn.cursor() as cursor:
-            for i in range(0, len(data), batch_size):
-                batch = data[i:i+batch_size]
-                columns = ', '.join(batch[0].keys())
-                values = ', '.join([f"(%({k})s)" for k in batch[0].keys()])
-                query = f"""
-                    INSERT INTO {table} ({columns})
-                    VALUES {values}
-                    ON CONFLICT DO NOTHING
-                """
-                execute_batch(cursor, query, batch)
+    def insert_vacancies(self, vacancies: List[Dict[str, Any]]) -> int:
+        """
+        Пакетная вставка вакансий с обработкой зарплаты
 
-def insert_vacancies(vacancies: List[Dict]) -> None:
-    """Пакетная вставка вакансий"""
-    query = """
-        INSERT INTO vacancies (employer_id, title, salary_from, 
-            salary_to, currency, url)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """
-    try:
-        conn = psycopg2.connect(**config())
-        cur = conn.cursor()
+        Args:
+            vacancies: Список вакансий в формате API HH
 
+        Returns:
+            Количество успешно добавленных вакансий
+        """
+        query = """
+            INSERT INTO vacancies (
+                vacancy_id,
+                employer_id, 
+                title, 
+                salary_from, 
+                salary_to, 
+                currency, 
+                url
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (vacancy_id) DO UPDATE SET
+                title = EXCLUDED.title,
+                salary_from = EXCLUDED.salary_from,
+                salary_to = EXCLUDED.salary_to,
+                currency = EXCLUDED.currency,
+                url = EXCLUDED.url
+        """
         data = []
         for vac in vacancies:
-            salary = vac.get('salary')
+            salary = vac.get('salary') or {}
+            employer = vac.get('employer') or {}
+
             data.append((
-                vac['employer']['id'],
-                vac['name'],
-                salary.get('from') if salary else None,
-                salary.get('to') if salary else None,
-                salary.get('currency') if salary else None,
-                vac['alternate_url']
+                vac['id'],
+                employer.get('id'),
+                vac['name'][:200],  # Ограничение по схеме БД
+                salary.get('from'),
+                salary.get('to'),
+                salary.get('currency', 'RUR')[:3],  # ISO currency code
+                vac.get('alternate_url', '')[:200]
             ))
 
-        cur.executemany(query, data)
-        conn.commit()
-        logger.info(f"Добавлено {len(vacancies)} вакансий")
+        return self._batch_execute(query, data, "вакансий")
 
-    except psycopg2.Error as e:
-        logger.error(f"Ошибка вставки вакансий: {e}")
-        conn.rollback()
-    finally:
-        if conn: conn.close()
+    def _batch_execute(
+            self,
+            query: str,
+            data: List[tuple],
+            entity_name: str,
+            batch_size: int = 500
+    ) -> int:
+        """Универсальный метод пакетного выполнения"""
+        inserted = 0
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    for offset in range(0, len(data), batch_size):
+                        batch = data[offset:offset + batch_size]
+                        execute_batch(cur, query, batch)
+                        inserted += cur.rowcount
+                    conn.commit()
+
+                    logger.info(
+                        f"Успешно добавлено {inserted} {entity_name} "
+                        f"(дубликатов: {len(data) - inserted})"
+                    )
+                    return inserted
+
+        except psycopg2.Error as e:
+            logger.error(f"Ошибка вставки {entity_name}: {e}")
+            conn.rollback()
+            return 0
+
+    def clear_tables(self, tables: List[str] = None) -> None:
+        """Очистка таблиц с проверкой существования"""
+        tables = tables or ['vacancies', 'employers']
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    for table in tables:
+                        cur.execute(f"""
+                            TRUNCATE TABLE {table} 
+                            RESTART IDENTITY 
+                            CASCADE
+                        """)
+                    conn.commit()
+                    logger.info(f"Таблицы {', '.join(tables)} очищены")
+
+        except psycopg2.Error as e:
+            logger.error(f"Ошибка очистки таблиц: {e}")
+            raise
+
+
+if __name__ == "__main__":
+    helper = DBHelper()
+    # Пример использования
+    sample_employers = [{
+        'id': '123',
+        'name': 'Test Company',
+        'alternate_url': 'http://example.com',
+        'open_vacancies': 5
+    }]
+    helper.insert_employers(sample_employers)
