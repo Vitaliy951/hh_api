@@ -1,34 +1,38 @@
 from database.db_manager import DBManager
-from database.db_creator import create_database, create_tables
+from database.db_creator import DBCreator  # Изменен импорт
 from api.hh_api import HeadHunterAPI
-from utils.helpers import insert_employers, insert_vacancies
+from utils.helpers import DBHelper  # Изменен импорт
 from config import config
 import time
 
 
 def main():
-    # Инициализация БД
-    create_database()
-    create_tables()
+    # Инициализация БД через менеджер
+    db_manager = DBManager(config.db_config)
+    db_creator = DBCreator(db_manager)  # Создаем экземпляр DBCreator
 
-    # Получение данных
+    # Создание структуры БД
+    db_creator.create_database()
+    db_creator.create_tables()
+
+    # Работа с API
     hh_api = HeadHunterAPI()
     employers = hh_api.get_top_employers()
 
-    # Сохранение данных
-    insert_employers(employers)
+    # Вставка данных через хелпер
+    db_helper = DBHelper(db_manager)  # Создаем экземпляр DBHelper
+    db_helper.insert_employers(employers)
 
+    # Сбор вакансий
     vacancies = []
     for employer in employers:
-        time.sleep(0.5)  # Задержка для соблюдения лимитов API
+        time.sleep(0.5)
         vacancies += hh_api.get_vacancies_by_employer(employer.id)
 
-    insert_vacancies(vacancies)
+    db_helper.insert_vacancies(vacancies)
 
-    # Работа с пользователем
-    db = DBManager(config.db_config)
-    user_menu(db)
-
+    # Запуск меню
+    user_menu(db_manager)
 
 def user_menu(db: DBManager):
     while True:
