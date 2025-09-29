@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DB_CONFIG = {
-    'dbname': os.getenv('DB_NAME'),
-    'user': os.getenv('DB_USER'),
-    'password': os.getenv('DB_PASSWORD'),
-    'host': os.getenv('DB_HOST')
+    'dbname': 'hh_vacancies',
+    'user': 'ваш_пользователь_СУБД',
+    'password': 'пароль',
+    'host': 'localhost',  # Попробуйте 127.0.0.1 если не работает
+    'port': 5432
 }
