@@ -1,60 +1,66 @@
-import sqlite3
-from typing import List, Dict
-from contextlib import contextmanager
-from utils.logger import logger
+import psycopg2
+from typing import List, Tuple, Optional
+from config import DB_CONFIG
+
 
 class DBManager:
-    def __init__(self, db_path: str = 'vacancies.db'):
-        self.db_path = db_path
+    """Класс для управления данными в PostgreSQL"""
 
-    @contextmanager
-    def _get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        try:
-            yield conn
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {str(e)}")
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+    def __init__(self):
+        self.conn = psycopg2.connect(**DB_CONFIG)
+        self.cursor = self.conn.cursor()
 
-    def execute_query(self, query: str, params: tuple = None) -> List[Dict]:
-        with self._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            try:
-                cursor.execute(query, params or ())
-                return [dict(row) for row in cursor.fetchall()]
-            except sqlite3.Error as e:
-                logger.error(f"Query failed: {str(e)}")
-                raise
-
-    def get_companies_stats(self) -> List[Dict]:
-        query = '''
-            SELECT 
-                e.id AS employer_id,
-                e.name AS company,
-                COUNT(v.id) AS total_vacancies,
-                AVG(v.salary) AS avg_salary
+    def get_companies_and_vacancies_count(self) -> List[Tuple[str, int]]:
+        """Возвращает ТОП-10 компаний по количеству вакансий"""
+        query = """
+            SELECT e.name, COUNT(v.id) 
             FROM employers e
             LEFT JOIN vacancies v ON e.id = v.employer_id
-            GROUP BY e.id
-            HAVING total_vacancies > 0
-            ORDER BY total_vacancies DESC
-        '''
-        return self.execute_query(query)
+            GROUP BY e.name
+            ORDER BY COUNT(v.id) DESC
+            LIMIT 10
+        """
+        self.cursor.execute(query)
+        return self.cursor.fetchall()
 
-    def get_vacancies(self, min_salary: int = None) -> List[Dict]:
-        query = '''
-            SELECT 
-                e.name AS company,
-                v.title,
-                v.salary,
-                v.url
+    def get_all_vacancies(self) -> List[str]:
+        """Возвращает вакансии в человекочитаемом формате"""
+        query = """
+            SELECT e.name, v.title, 
+                   COALESCE(v.salary_from, v.salary_to, 'Не указана') as salary,
+                   v.url
             FROM vacancies v
             JOIN employers e ON v.employer_id = e.id
-            WHERE v.salary >= ?
-            ORDER BY v.salary DESC
-        '''
-        return self.execute_query(query, (min_salary or 0,))
+        """
+        self.cursor.execute(query)
+        return [f"{row[0]} | {row[1]} | Зарплата: {row[2]} | {row[3]}" for row in self.cursor.fetchall()]
+
+    def get_avg_salary(self) -> float:
+        """Рассчитывает среднюю зарплату"""
+        self.cursor.execute("SELECT AVG((salary_from + salary_to)/2) FROM vacancies")
+        return round(self.cursor.fetchone()[0], 2)
+
+    def get_vacancies_with_higher_salary(self) -> List[Tuple]:
+        """Вакансии с зарплатой выше средней"""
+        avg = self.get_avg_salary()
+        query = f"""
+            SELECT title, salary_from, salary_to, url 
+            FROM vacancies 
+            WHERE (salary_from + salary_to)/2 > {avg}
+        """
+        self.cursor.execute(query)
+        return self.cursor.fetchall()
+
+    def get_vacancies_with_keyword(self, keyword: str) -> List[Tuple]:
+        """Поиск вакансий по ключевым словам"""
+        query = f"""
+            SELECT title, salary_from, salary_to, url 
+            FROM vacancies 
+            WHERE title ILIKE '%{keyword}%'
+        """
+        self.cursor.execute(query)
+        return self.cursor.fetchall()
+
+    def __del__(self):
+        self.cursor.close()
+        self.conn.close()

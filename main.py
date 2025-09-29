@@ -1,32 +1,53 @@
-from api.hh_api import HeadHunterAPI
-from database.db_creator import DBCreator
-from utils.db_manager import DBManager
-from utils.logger import logger
+from database.db_manager import DBManager
+from database.models import create_tables
+from hh_api import load_data_to_db
 
 
-def main():
-    logger.info("Starting application")
+def user_interface():
+    """Интерфейс взаимодействия с пользователем"""
+    db = DBManager()
 
-    # Инициализация БД
-    try:
-        db_creator = DBCreator()
-        db_creator.create_tables()
-    except Exception as e:
-        logger.critical(f"DB initialization failed: {str(e)}")
-        return
+    while True:
+        print("\n1. ТОП-10 компаний по вакансиям")
+        print("2. Все вакансии")
+        print("3. Средняя зарплата")
+        print("4. Вакансии с высокой ЗП")
+        print("5. Поиск вакансий")
+        print("0. Выход")
 
-    # Получение данных
-    hh_api = HeadHunterAPI()
-    companies = ['Яндекс', 'Сбербанк']
+        choice = input("Выберите действие: ")
 
-    logger.info(f"Fetching data for companies: {', '.join(companies)}")
-    employers = hh_api.get_employers(companies)
+        if choice == "1":
+            print("\nКомпания | Количество вакансий")
+            for company, count in db.get_companies_and_vacancies_count():
+                print(f"{company}: {count}")
 
-    # Менеджер БД
-    db_manager = DBManager()
-    stats = db_manager.get_companies_stats()
-    logger.info(f"Database stats: {stats}")
+        elif choice == "2":
+            print("\nВсе вакансии:")
+            for vac in db.get_all_vacancies():
+                print(vac)
+
+        elif choice == "3":
+            avg = db.get_avg_salary()
+            print(f"\nСредняя зарплата: {avg} RUB")
+
+        elif choice == "4":
+            print("\nВакансии с зарплатой выше средней:")
+            for vac in db.get_vacancies_with_higher_salary():
+                print(f"{vac[0]} | {vac[1]}-{vac[2]} RUB | {vac[3]}")
+
+        elif choice == "5":
+            keyword = input("Введите ключевое слово: ")
+            results = db.get_vacancies_with_keyword(keyword)
+            print(f"\nНайдено {len(results)} вакансий:")
+            for vac in results:
+                print(f"{vac[0]} | {vac[1]}-{vac[2]} RUB | {vac[3]}")
+
+        elif choice == "0":
+            break
 
 
 if __name__ == "__main__":
-    main()
+    create_tables()
+    load_data_to_db()  # Предполагается существование этого модуля
+    user_interface()

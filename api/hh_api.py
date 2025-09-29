@@ -1,38 +1,82 @@
 import requests
-from typing import List
-from api.models import Employer, Vacancy
-from utils.logger import logger
+import psycopg2
+from typing import List, Dict
+from config import DB_CONFIG
+from database.models import create_tables
 
-class HeadHunterAPI:
-    BASE_URL = 'https://api.hh.ru/'
-    HEADERS = {'User-Agent': 'HH-API Client/1.0'}
+# Список ID компаний с hh.ru (пример)
+EMPLOYER_IDS = [
+    '15478',  # VK
+    '1740',  # Яндекс
+    '3529',  # Сбер
+    '78638',  # Тинькофф
+    '87021',  # Wildberries
+    '2180',  # OZON
+    '3776',  # МТС
+    '39305',  # Газпром нефть
+    '64174',  # 2ГИС
+    '1122462'  # Ростелеком
+]
 
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update(self.HEADERS)
 
-    def _make_request(self, endpoint: str, params: dict) -> dict:
-        try:
-            response = self.session.get(
-                f'{self.BASE_URL}{endpoint}',
-                params=params,
-                timeout=10
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed: {str(e)}")
-            return {}
+def get_employer_data(employer_id: str) -> Dict:
+    """Получение данных о компании"""
+    url = f'https://api.hh.ru/employers/{employer_id}'
+    response = requests.get(url)
+    return response.json() if response.status_code == 200 else None
 
-    def get_employers(self, company_names: List[str]) -> List[Employer]:
-        employers = []
-        for name in company_names:
-            data = self._make_request('employers', {'text': name})
-            if data.get('items'):
-                employer_data = data['items'][0]
-                employers.append(Employer.from_json(employer_data))
-        return employers
 
-    def get_vacancies(self, employer_id: int) -> List[Vacancy]:
-        data = self._make_request('vacancies', {'employer_id': employer_id})
-        return [Vacancy.from_json(v) for v in data.get('items', [])]
+def get_vacancies(employer_id: str) -> List[Dict]:
+    """Получение вакансий компании"""
+    url = f'https://api.hh.ru/vacancies?employer_id={employer_id}&per_page=100'
+    response = requests.get(url)
+    return response.json().get('items', []) if response.status_code == 200 else []
+
+
+def save_to_database(employers_data: List[Dict], vacancies_data: List[Dict]):
+    """Сохранение данных в PostgreSQL"""
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            # Вставка работодателей
+            for employer in employers_data:
+                cur.execute(
+                    "INSERT INTO employers (name, hh_id) VALUES (%s, %s) RETURNING id",
+                    (employer['name'], employer['id'])
+                )
+                employer_db_id = cur.fetchone()[0]
+
+                # Вставка вакансий
+                for vacancy in filter(lambda v: v['employer']['id'] == employer['id'], vacancies_data):
+                    salary = vacancy.get('salary')
+                    cur.execute(
+                        """INSERT INTO vacancies 
+                           (title, salary_from, salary_to, url, employer_id)
+                           VALUES (%s, %s, %s, %s, %s)""",
+                        (
+                            vacancy['name'],
+                            salary['from'] if salary else None,
+                            salary['to'] if salary else None,
+                            vacancy['alternate_url'],
+                            employer_db_id
+                        )
+                    )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def load_data_to_db():
+    """Основная функция загрузки данных"""
+    create_tables()
+
+    all_employers = []
+    all_vacancies = []
+
+    for employer_id in EMPLOYER_IDS:
+        if employer_data := get_employer_data(employer_id):
+            all_employers.append(employer_data)
+            all_vacancies.extend(get_vacancies(employer_id))
+
+    save_to_database(all_employers, all_vacancies)
+    print(f"Загружено: {len(all_employers)} компаний и {len(all_vacancies)} вакансий")
