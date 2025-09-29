@@ -1,36 +1,32 @@
-from database.db_manager import DBManager
+from api.hh_api import HeadHunterAPI
 from database.db_creator import DBCreator
-from hh_api import HeadHunterAPI
-from helpers import DBHelper
-from config import config
+from utils.db_manager import DBManager
 from utils.logger import logger
 
 
 def main():
+    logger.info("Starting application")
 
-    db_manager = DBManager(config.db_config)
-    db_creator = DBCreator()
-    db_creator.create_database()
-    db_creator.create_tables()
+    # Инициализация БД
+    try:
+        db_creator = DBCreator()
+        db_creator.create_tables()
+    except Exception as e:
+        logger.critical(f"DB initialization failed: {str(e)}")
+        return
 
-    # Работа с API
+    # Получение данных
     hh_api = HeadHunterAPI()
-    employers = hh_api.get_top_employers()
+    companies = ['Яндекс', 'Сбербанк']
 
+    logger.info(f"Fetching data for companies: {', '.join(companies)}")
+    employers = hh_api.get_employers(companies)
 
-    if employers:
-        db_helper = DBHelper(db_manager)
-        inserted = db_helper.insert_employers(
-            [emp.to_dict() for emp in employers]
-        )
-        logger.info(f"Успешно добавлено работодателей: {inserted}")
-    else:
-        logger.warning("Нет данных работодателей для вставки")
+    # Менеджер БД
+    db_manager = DBManager()
+    stats = db_manager.get_companies_stats()
+    logger.info(f"Database stats: {stats}")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        logger.critical(f"Критическая ошибка: {str(e)}")
-        raise
+    main()
