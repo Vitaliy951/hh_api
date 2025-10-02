@@ -13,32 +13,18 @@ class DBCreator:
 
     def _create_database(self) -> None:
         """Создание БД если отсутствует"""
-        admin_conn = None
-        try:
-            admin_conn = psycopg2.connect(
-                dbname='postgres',
-                user=DB_CONFIG['user'],
-                password=DB_CONFIG['password'],
-                host=DB_CONFIG['host']
-            )
-            admin_conn.autocommit = True
+        conn = psycopg2.connect(dbname='postgres',
+                                user=DB_CONFIG['user'],
+                                password=DB_CONFIG['password'],
+                                host=DB_CONFIG['host'])
+        conn.autocommit = True
+        cur = conn.cursor()
 
-            with admin_conn.cursor() as cursor:
-                # Безопасное экранирование имени БД
-                query = sql.SQL("CREATE DATABASE {}").format(
-                    sql.Identifier(DB_CONFIG['dbname'])
-                )
-                cursor.execute(query)
-                logger.info(f"БД {DB_CONFIG['dbname']} успешно создана")
+        cur.execute(f"DROP DATABASE IF EXISTS {DB_CONFIG['dbname']}")
+        cur.execute(f"CREATE DATABASE {DB_CONFIG['dbname']}")
 
-        except errors.DuplicateDatabase:
-            logger.debug(f"БД {DB_CONFIG['dbname']} уже существует")
-        except psycopg2.OperationalError as e:
-            logger.critical(f"Критическая ошибка подключения: {str(e)}")
-            raise
-        finally:
-            if admin_conn and not admin_conn.closed:
-                admin_conn.close()
+        cur.close()
+        conn.close()
 
     def _connect(self) -> None:
         """Установка основного соединения"""
