@@ -1,4 +1,4 @@
-import argparse
+import sys
 from database.db_manager import DBManager
 from hh_api import load_data_to_db
 from utils.logger import logger
@@ -48,12 +48,9 @@ def user_interface():
                 print("Некорректный ввод!")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--force', action='store_true', help='Принудительная перезагрузка данных')
-    args = parser.parse_args()
-
     try:
-        load_data_to_db(args.force)
+        force_flag = '--force' in sys.argv
+        load_data_to_db(force_flag)
         user_interface()
     except Exception as e:
         logger.critical(f"Критическая ошибка: {str(e)}")

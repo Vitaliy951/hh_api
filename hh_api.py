@@ -1,5 +1,5 @@
 import requests
-import argparse
+import sys
 from typing import List, Dict
 from config import DB_CONFIG
 from database.db_creator import DBCreator
@@ -7,7 +7,6 @@ from database.db_manager import DBManager
 from utils.logger import logger
 
 EMPLOYER_IDS = ['15478', '1740', '3529', '78638', '87021', '2180', '3776', '39305', '64174', '1122462']
-
 
 def get_employer_data(employer_id: str) -> Dict:
     url = f'https://api.hh.ru/employers/{employer_id}'
@@ -18,7 +17,6 @@ def get_employer_data(employer_id: str) -> Dict:
     except Exception as e:
         logger.error(f"Ошибка получения данных работодателя {employer_id}: {str(e)}")
         return None
-
 
 def get_vacancies(employer_id: str) -> List[Dict]:
     try:
@@ -31,7 +29,6 @@ def get_vacancies(employer_id: str) -> List[Dict]:
     except Exception as e:
         logger.error(f"Ошибка получения вакансий для {employer_id}: {str(e)}")
         return []
-
 
 def save_to_database(employers: List[Dict], vacancies: List[Dict]):
     with DBManager() as db:
@@ -68,7 +65,6 @@ def save_to_database(employers: List[Dict], vacancies: List[Dict]):
             logger.critical(f"Ошибка сохранения данных: {str(e)}")
             raise
 
-
 def load_data_to_db(force: bool = False):
     try:
         # Инициализация БД
@@ -95,9 +91,6 @@ def load_data_to_db(force: bool = False):
         logger.error(f"Критическая ошибка при загрузке данных: {str(e)}")
         raise
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--force', action='store_true', help='Принудительная перезагрузка данных')
-    args = parser.parse_args()
-    load_data_to_db(args.force)
+    force_flag = '--force' in sys.argv
+    load_data_to_db(force_flag)
