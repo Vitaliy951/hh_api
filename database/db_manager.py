@@ -4,13 +4,26 @@ from contextlib import contextmanager
 from config import DB_CONFIG
 from utils.logger import logger
 
+
 class DBManager:
     def __init__(self):
+        self.conn = None  # Инициализация в __enter__
+
+    def __enter__(self):
         self.conn = psycopg2.connect(**DB_CONFIG)
         self.conn.autocommit = False
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn and not self.conn.closed:
+            self.conn.close()
+            logger.debug("Соединение с БД закрыто")
 
     @contextmanager
     def _get_cursor(self):
+        if not self.conn or self.conn.closed:
+            raise RuntimeError("Нет активного соединения с БД")
+
         cursor = self.conn.cursor()
         try:
             yield cursor
