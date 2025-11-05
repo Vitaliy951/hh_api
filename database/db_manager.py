@@ -4,6 +4,9 @@ from contextlib import contextmanager
 from config import DB_CONFIG
 from utils.logger import logger
 
+from config import DB_CONFIG
+if not all(DB_CONFIG.values()):
+    raise RuntimeError("Некорректная конфигурация БД. Проверьте .env файл")
 
 class DBManager:
     def __init__(self):
@@ -136,3 +139,21 @@ class DBManager:
     def __del__(self):
         if self.conn and not self.conn.closed:
             self.conn.close()
+
+    def __enter__(self):
+        try:
+            self.conn = psycopg2.connect(**DB_CONFIG)
+            self.conn.autocommit = False
+            return self
+        except psycopg2.OperationalError as e:
+            logger.error(f"Ошибка подключения: {str(e)}")
+            raise
+
+def init_db():
+    with psycopg2.connect(dbname='postgres', user='postgres') as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname='hh_vacancies'")
+            if not cur.fetchone():
+                cur.execute("CREATE DATABASE hh_vacancies")
+                logger.info("БД hh_vacancies создана")
