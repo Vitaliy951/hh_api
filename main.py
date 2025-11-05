@@ -1,4 +1,5 @@
 import sys
+import psycopg2  # Добавить импорт
 from database.db_manager import DBManager
 from hh_api import load_data_to_db
 from utils.logger import logger
@@ -47,11 +48,22 @@ def user_interface():
             else:
                 print("Некорректный ввод!")
 
+
 if __name__ == "__main__":
     try:
         force_flag = '--force' in sys.argv
-        load_data_to_db(force_flag)
+
+        # Проверка доступности БД перед загрузкой данных
+        with DBManager() as db:
+            if not db.has_data() or force_flag:
+                load_data_to_db(force_flag)
+
         user_interface()
+
+    except ImportError as e:
+        logger.error(f"Ошибка импорта: {str(e)}")
+    except psycopg2.OperationalError as e:
+        logger.critical(f"Ошибка подключения к БД: {str(e)}")
     except Exception as e:
-        logger.critical(f"Критическая ошибка: {str(e)}")
+        logger.critical(f"Необработанная ошибка: {str(e)}")
         raise
