@@ -169,6 +169,6 @@ cython_debug/
 
 # Ruff stuff:
 .ruff_cache/
-
+postgresql-12.18.tar.gz
 # PyPI configuration file
 .pypirc
