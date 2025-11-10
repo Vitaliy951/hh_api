@@ -1,56 +1,69 @@
+import sys
+import psycopg2  # Добавить импорт
 from database.db_manager import DBManager
-from api.hh_api import HeadHunterAPI
-from database.models import Employer, Vacancy
-import os
+from hh_api import load_data_to_db
+from utils.logger import logger
 
+def user_interface():
+    """Интерфейс взаимодействия с пользователем"""
+    with DBManager() as db:
+        while True:
+            print("\n1. ТОП-10 компаний по вакансиям")
+            print("2. Все вакансии")
+            print("3. Средняя зарплата")
+            print("4. Вакансии с высокой ЗП")
+            print("5. Поиск вакансий")
+            print("0. Выход")
 
-def main():
-    # Инициализация БД
-    db = DBManager(
-        dbname=os.getenv('DB_NAME'),
-        user=os.getenv('DB_USER'),
-        password=os.getenv('DB_PASSWORD'),
-        host=os.getenv('DB_HOST')
-    )
+            choice = input("Выберите действие: ")
 
-    # Получение данных
-    api = HeadHunterAPI(employer_ids=['15478', '2180', ...])  # 10 компаний
-    employers = api.get_employers()
-    vacancies = []
-    for emp in employers:
-        vacancies.extend(api.get_vacancies(emp['id']))
+            if choice == "1":
+                print("\nКомпания | Открытых вакансий")
+                for company, count in db.get_companies_and_vacancies_count():
+                    print(f"{company}: {count}")
 
-    # Заполнение БД
-    with db._get_cursor() as cur:
-        # Вставка работодателей
-        for emp in employers:
-            cur.execute(
-                "INSERT INTO employers VALUES (%s, %s, %s, %s)",
-                (emp['id'], emp['name'], emp['url'], emp['open_vacancies'])
-            )
+            elif choice == "2":
+                print("\nВсе вакансии:")
+                for vac in db.get_all_vacancies():
+                    print(vac)
 
-        # Вставка вакансий
-        for vac in vacancies:
-            salary = vac.get('salary')
-            cur.execute(
-                """INSERT INTO vacancies 
-                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (
-                    vac['id'],
-                    vac['name'],
-                    vac['employer']['id'],
-                    salary['from'] if salary else None,
-                    salary['to'] if salary else None,
-                    salary['currency'] if salary else None,
-                    vac['alternate_url']
-                )
-            )
+            elif choice == "3":
+                avg = db.get_avg_salary()
+                print(f"\nСредняя зарплата: {avg} RUB")
 
-    # Пример использования
-    print("Компании и количество вакансий:")
-    for company, count in db.get_companies_and_vacancies_count():
-        print(f"{company}: {count} вакансий")
+            elif choice == "4":
+                print("\nВакансии с зарплатой выше средней:")
+                for vac in db.get_vacancies_with_higher_salary():
+                    print(f"{vac[0]} | {vac[1]}-{vac[2]} RUB | {vac[3]}")
+
+            elif choice == "5":
+                keyword = input("Введите ключевое слово: ")
+                results = db.get_vacancies_with_keyword(keyword)
+                print(f"\nНайдено {len(results)} вакансий:")
+                for vac in results:
+                    print(f"{vac[0]} | {vac[1]}-{vac[2]} RUB | {vac[3]}")
+
+            elif choice == "0":
+                break
+            else:
+                print("Некорректный ввод!")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        force_flag = '--force' in sys.argv
+
+        # Проверка доступности БД перед загрузкой данных
+        with DBManager() as db:
+            if not db.has_data() or force_flag:
+                load_data_to_db(force_flag)
+
+        user_interface()
+
+    except ImportError as e:
+        logger.error(f"Ошибка импорта: {str(e)}")
+    except psycopg2.OperationalError as e:
+        logger.critical(f"Ошибка подключения к БД: {str(e)}")
+    except Exception as e:
+        logger.critical(f"Необработанная ошибка: {str(e)}")
+        raise
